@@ -1,0 +1,65 @@
+---
+title: "HW5 - Model Comparison"
+format: pdf
+editor: visual
+---
+
+## Task 1 - Conceptual Questions
+
+-   What is the purpose of using cross-validation when fitting a random forest model?
+
+    -   
+
+-   Describe the bagged tree algorithm.
+
+    -   
+
+-   What is meant by a general linear model?
+
+    -   
+
+-   When fitting a multiple linear regression model, what does adding an interaction term do? That is, what does it allow the model to do differently as compared to when it is not included in the model?
+
+    -   
+
+-   Why do we split our data into a training and test set?
+
+    -   We split our data into a training and test set because we don't want the model to be fitted exactly to the entire data set making it not as good at predicting data it has not seen yet. The model can be fit to the training set, then the test set can be used to determine how well the model does on data it has not seen, allowing for the best model fit to be chosen.
+
+## Task 2 - Data Prep
+
+### `packages` and `data`
+
+```{r, message=FALSE}
+#packages to library
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(yardstick)
+
+#read in data as a tibble
+heart_data <- as_tibble(read.csv("data/heart.csv"))
+heart_data
+```
+
+```{r}
+summary(heart_data)
+```
+
+Heart Disease is a categorical variable showing whether the patient has a heart disease or not. This does make sense because the summary shows either 0 for no heart disease or 1 for having heart disease.
+
+```{r}
+new_heart <- heart_data |> 
+  mutate(DiseasePresent = as.factor(HeartDisease)) |>
+  select(-ST_Slope, -HeartDisease)
+
+new_heart
+```
+
+## Task 3 - EDA
+
+## Task 4 - Testing and Training
+
+## Task 5 - OLS and LASSO
+
+## Task 6 - Logistic Regression
