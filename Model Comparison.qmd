@@ -8,19 +8,19 @@ editor: visual
 
 -   What is the purpose of using cross-validation when fitting a random forest model?
 
-    -   
+    -   The purpose of using cross-validation when fitting a random forest model is this allows the model to be trained and tested on different sets of data without having to compromise the size of the data. This allows the random forest model to be fitted on the entire data set through cross-validation.
 
 -   Describe the bagged tree algorithm.
 
-    -   
+    -   In the bagged tree algorithm, the data is treated as a population where samples of this data is taken. Each sample could have duplicates or missing values. A tree will be fitted on each sample from the data, then the average of these trees are taken to determine a prediction for the data set. 
 
 -   What is meant by a general linear model?
 
-    -   
+    -   A general linear model expands on the linear regression model, working well with dependent variables that don't have a normal distribution or response variables that are not continuous.
 
 -   When fitting a multiple linear regression model, what does adding an interaction term do? That is, what does it allow the model to do differently as compared to when it is not included in the model?
 
-    -   
+    -   When fitting a multiple linear regression model, adding an interaction term will cause the coefficients to drastically change because the variables will now also depend on another variable. This allows the model to show the relationship between the variables on the response as there will be different outcomes with a variable at different levels of another variable. 
 
 -   Why do we split our data into a training and test set?
 
@@ -30,12 +30,13 @@ editor: visual
 
 ### `packages` and `data`
 
-```{r, message=FALSE}
+```{r, message=FALSE, warning=FALSE}
 #packages to library
 library(tidyverse)
 library(tidymodels)
 library(caret)
 library(yardstick)
+library(glmnet)
 
 #read in data as a tibble
 heart_data <- as_tibble(read.csv("data/heart.csv"))
@@ -43,12 +44,14 @@ heart_data
 ```
 
 ```{r}
+#summarize the data
 summary(heart_data)
 ```
 
 Heart Disease is a categorical variable showing whether the patient has a heart disease or not. This does make sense because the summary shows either 0 for no heart disease or 1 for having heart disease.
 
 ```{r}
+#change HeartDisease to categorical and remove some variables
 new_heart <- heart_data |> 
   mutate(DiseasePresent = as.factor(HeartDisease)) |>
   select(-ST_Slope, -HeartDisease)
@@ -58,8 +61,177 @@ new_heart
 
 ## Task 3 - EDA
 
+```{r, message=FALSE}
+#create scatter plot of data
+ggplot(new_heart, aes(x = MaxHR, y = Age, color = DiseasePresent)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = "Max Heart Rate", 
+       title = "Age as a Function of Max Heart Rate and Heart Disease", 
+       color = "Disease Present") +
+  scale_color_manual(labels = c("No", "Yes")) +
+  scale_color_viridis_d()
+```
+
+An interaction model would be the most appropriate for this data because based on the scatter plots, the lines for when the patient has a heart disease and when they do not intersect, showing an interaction.
+
 ## Task 4 - Testing and Training
+
+```{r}
+#split data into training and test set
+set.seed(101)
+split <- initial_split(new_heart, prop = 0.8)
+train <- training(split)
+test <- testing(split)
+```
 
 ## Task 5 - OLS and LASSO
 
+### OLS Model
+
+```{r}
+#fit interaction model
+ols_mlr <- lm(Age ~ MaxHR*DiseasePresent, data = train)
+
+summary(ols_mlr)
+```
+
+```{r}
+#test ols model on test data
+ols_prediction <- predict(ols_mlr, newdata = test) 
+pred_ols <- test |> mutate(Prediction = ols_prediction)
+
+#calculate rmse
+rmse(pred_ols, truth = Age, estimate = Prediction)
+```
+
+### LASSO Model
+
+```{r}
+#set up 10 fold CV
+CV_folds <- vfold_cv(train, 10)
+
+#set up LASSO recipe
+LASSO_recipe <- recipe(Age ~ MaxHR + DiseasePresent, data = train) |>
+  step_dummy(DiseasePresent) |>
+  step_normalize(MaxHR) |>
+  step_interact(~MaxHR:starts_with("DiseasePresent"))
+
+LASSO_recipe
+```
+
+```{r}
+#set up LASSO spec
+LASSO_spec <- linear_reg(penalty = tune(), mixture = 1) |>
+  set_engine("glmnet")
+
+#create LASSO workflow
+LASSO_wkf <- workflow() |>
+  add_recipe(LASSO_recipe) |>
+  add_model(LASSO_spec)
+
+#set up LASSO grid
+LASSO_grid <- LASSO_wkf |>
+  tune_grid(resamples = CV_folds, grid = grid_regular(penalty(), levels = 200))
+
+#determine best tunning parameter
+lowest_rmse <- LASSO_grid |>
+  select_best(metric = "rmse")
+
+#fit training set to model
+LASSO_final <- LASSO_wkf |>
+  finalize_workflow(lowest_rmse) |>
+  fit(train)
+tidy(LASSO_final)
+```
+
+The RMSE calculation between the ols and the LASSO model should be roughly the same because both models are comparing the same two variables and their interaction.
+
+```{r}
+#test LASSO model on test data
+LASSO_pred <- predict(LASSO_final, new_data = test)
+pred_LASSO <- test |> mutate(Prediction = LASSO_pred$.pred)
+
+#calculate rmse
+rmse(pred_LASSO, truth = Age, estimate = Prediction)
+
+```
+
+The RMSE for the ols model of 9.100206 is roughly the same as the RMSE for the LASSO model of 9.09553.
+
+The RMSE calculations are roughly the same even though the coefficients for each model is different because the RMSE is showing how far the predictions are from the actual values. The two models have different ways of predicting the values, but still end up with similar accuracy to the actual values.
+
 ## Task 6 - Logistic Regression
+
+### LR Model 1
+
+```{r}
+#set up logistic regression recipe
+lr1_rec <- recipe(DiseasePresent ~ Age + Sex + MaxHR, data = train) |>
+  step_normalize(all_numeric()) |>
+  step_dummy(Sex)
+
+#set up logistic regression spec
+lr1_spec <- logistic_reg() |>
+  set_engine("glm")
+
+#set up logistic regression workflow
+lr1_wkf <- workflow() |>
+  add_recipe(lr1_rec) |>
+  add_model(lr1_spec)
+
+#fit data to CV folds
+lr1_fit <- lr1_wkf |>
+  fit_resamples(CV_folds, metrics = metric_set(accuracy, mn_log_loss))
+```
+
+### LR Model 2
+
+```{r}
+#set up logistic regression recipe
+lr2_rec <- recipe(DiseasePresent ~ Age + Sex + RestingBP + Cholesterol, 
+                  data = train) |>
+  step_normalize(all_numeric()) |>
+  step_dummy(Sex)
+
+#set up logistic regression spec
+lr2_spec <- logistic_reg() |>
+  set_engine("glm")
+
+#set up logistic regression workflow
+lr2_wkf <- workflow() |>
+  add_recipe(lr2_rec) |>
+  add_model(lr2_spec)
+
+#fit data to CV folds
+lr2_fit <- lr2_wkf |>
+  fit_resamples(CV_folds, metrics = metric_set(accuracy, mn_log_loss))
+```
+
+### Compare LR Models
+
+```{r}
+#compare metrics for both models
+rbind(lr1_fit |> collect_metrics(),
+      lr2_fit |> collect_metrics()) |>
+  mutate(Model = c("Model 1", "Model 1", "Model 2", "Model 2")) |>
+  select(Model, everything())
+```
+
+Model 1 is the best logistic regression model because it has the lowest loss log metric. 
+
+### Test LR Model on Test set
+
+```{r}
+#fit test data
+LR_test_fit <- lr1_wkf |>
+  fit(test)
+
+#use confusionMatrix() function
+conf_mat(test |> mutate(estimate = LR_test_fit |> predict(test) |> pull()), 
+         DiseasePresent, estimate)
+```
+
+Sensitivity is the measure of the true positive rate. On the test data, the model was able to correctly identify 70 out of the 90 positives giving a 77.8% sensitivity. This means that the model will be able to identify when a patient has a heart disease 77.8% of the time when the patient actually does have a heart disease. 
+
+Specificity is the measure of the true negative rate. The model was able to correctly identify 69 out of the 94 instances of negatives from the test data, giving a 73.4% specificity. This means that the model will be able to identify when the patient does not have a heart disease 73.4% of the time when the patient actually does not have a heart disease. 
